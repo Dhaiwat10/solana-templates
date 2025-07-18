@@ -1,27 +1,98 @@
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+
+function getWalletPath() {
+  const fromEnv = process.env.ANCHOR_WALLET
+  if (fromEnv) return fromEnv.replace(/^~(?=\/)/, os.homedir())
+  const anchorToml = fs.readFileSync(
+    path.resolve(__dirname, '..', 'Anchor.toml'),
+    'utf8',
+  )
+  const match = anchorToml.match(/wallet\s*=\s*"([^"]+)"/)
+  return match ? match[1].replace(/^~(?=\/)/, os.homedir()) : ''
+}
+import {
+  appendTransactionMessageInstruction,
+  createSolanaClient,
+  createTransactionMessage,
+  pipe,
+  setTransactionMessageFeePayerSigner,
+  setTransactionMessageLifetimeUsingBlockhash,
+  signAndSendTransactionMessageWithSigners,
+} from 'gill'
+import {
+  generateExtractableKeyPairSigner,
+  loadKeypairSignerFromFile,
+} from 'gill/node'
+import {
+  fetchMaybeCounter,
+  fetchCounter,
+  getCloseInstruction,
+  getDecrementInstruction,
+  getIncrementInstruction,
+  getInitializeInstruction,
+  getSetInstruction,
+} from '@project/anchor'
+
 describe('counter', () => {
-  // TODO: Implement tests for the counter program based on the Codama generated client.
-  // Use tests in `legacy/legacy-next-tailwind-counter/anchor/tests/counter.test.ts` as a reference.
-  it.skip('Initialize Counter', async () => {
-    expect(true).toBe(true)
+  const walletPath = getWalletPath()
+
+  const client = createSolanaClient({ urlOrMoniker: 'localnet' })
+  let payer: Awaited<ReturnType<typeof loadKeypairSignerFromFile>>
+  let counterSigner: Awaited<ReturnType<typeof generateExtractableKeyPairSigner>>
+
+  beforeAll(async () => {
+    payer = await loadKeypairSignerFromFile(walletPath)
+    counterSigner = await generateExtractableKeyPairSigner()
   })
 
-  it.skip('Increment Counter', async () => {
-    expect(true).toBe(true)
+  async function send(ix: Parameters<typeof appendTransactionMessageInstruction>[0]) {
+    const { value: latestBlockhash } = await client.rpc.getLatestBlockhash().send()
+    const message = pipe(
+      createTransactionMessage({ version: 0 }),
+      (m) => setTransactionMessageFeePayerSigner(payer, m),
+      (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
+      (m) => appendTransactionMessageInstruction(ix, m),
+    )
+    await signAndSendTransactionMessageWithSigners(message)
+  }
+
+  it('Initialize Counter', async () => {
+    await send(
+      getInitializeInstruction({ payer, counter: counterSigner })
+    )
+    const account = await fetchCounter(client.rpc, counterSigner.address)
+    expect(account.data.count).toBe(0)
   })
 
-  it.skip('Increment Counter Again', async () => {
-    expect(true).toBe(true)
+  it('Increment Counter', async () => {
+    await send(getIncrementInstruction({ counter: counterSigner.address }))
+    const account = await fetchCounter(client.rpc, counterSigner.address)
+    expect(account.data.count).toBe(1)
   })
 
-  it.skip('Decrement Counter', async () => {
-    expect(true).toBe(true)
+  it('Increment Counter Again', async () => {
+    await send(getIncrementInstruction({ counter: counterSigner.address }))
+    const account = await fetchCounter(client.rpc, counterSigner.address)
+    expect(account.data.count).toBe(2)
   })
 
-  it.skip('Set counter value', async () => {
-    expect(true).toBe(true)
+  it('Decrement Counter', async () => {
+    await send(getDecrementInstruction({ counter: counterSigner.address }))
+    const account = await fetchCounter(client.rpc, counterSigner.address)
+    expect(account.data.count).toBe(1)
   })
 
-  it.skip('Set close the counter account', async () => {
-    expect(true).toBe(true)
+  it('Set counter value', async () => {
+    await send(getSetInstruction({ counter: counterSigner.address, value: 42 }))
+    const account = await fetchCounter(client.rpc, counterSigner.address)
+    expect(account.data.count).toBe(42)
+  })
+
+  it('Close the counter account', async () => {
+    await send(getCloseInstruction({ payer, counter: counterSigner.address }))
+    const account = await fetchMaybeCounter(client.rpc, counterSigner.address)
+    expect(account).toBeNull()
   })
 })
