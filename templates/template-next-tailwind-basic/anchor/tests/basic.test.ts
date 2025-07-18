@@ -1,6 +1,17 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+
+function getWalletPath() {
+  const fromEnv = process.env.ANCHOR_WALLET
+  if (fromEnv) return fromEnv.replace(/^~(?=\/)/, os.homedir())
+  const anchorToml = fs.readFileSync(
+    path.resolve(__dirname, '..', 'Anchor.toml'),
+    'utf8',
+  )
+  const match = anchorToml.match(/wallet\s*=\s*"([^"]+)"/)
+  return match ? match[1].replace(/^~(?=\/)/, os.homedir()) : ''
+}
 import {
   appendTransactionMessageInstruction,
   createSolanaClient,
@@ -14,9 +25,7 @@ import { loadKeypairSignerFromFile } from 'gill/node'
 import { getGreetInstruction } from '@project/anchor'
 
 describe('basic', () => {
-  const anchorToml = fs.readFileSync(path.resolve(__dirname, '..', 'Anchor.toml'), 'utf8')
-  const walletMatch = anchorToml.match(/wallet\s*=\s*"([^"]+)"/)
-  const walletPath = walletMatch ? walletMatch[1].replace(/^~(?=\/)/, os.homedir()) : ''
+  const walletPath = getWalletPath()
 
   const client = createSolanaClient({ urlOrMoniker: 'localnet' })
   let signer: Awaited<ReturnType<typeof loadKeypairSignerFromFile>>

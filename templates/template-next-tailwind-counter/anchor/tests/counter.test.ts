@@ -1,6 +1,17 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+
+function getWalletPath() {
+  const fromEnv = process.env.ANCHOR_WALLET
+  if (fromEnv) return fromEnv.replace(/^~(?=\/)/, os.homedir())
+  const anchorToml = fs.readFileSync(
+    path.resolve(__dirname, '..', 'Anchor.toml'),
+    'utf8',
+  )
+  const match = anchorToml.match(/wallet\s*=\s*"([^"]+)"/)
+  return match ? match[1].replace(/^~(?=\/)/, os.homedir()) : ''
+}
 import {
   appendTransactionMessageInstruction,
   createSolanaClient,
@@ -25,9 +36,7 @@ import {
 } from '@project/anchor'
 
 describe('counter', () => {
-  const anchorToml = fs.readFileSync(path.resolve(__dirname, '..', 'Anchor.toml'), 'utf8')
-  const walletMatch = anchorToml.match(/wallet\s*=\s*"([^"]+)"/)
-  const walletPath = walletMatch ? walletMatch[1].replace(/^~(?=\/)/, os.homedir()) : ''
+  const walletPath = getWalletPath()
 
   const client = createSolanaClient({ urlOrMoniker: 'localnet' })
   let payer: Awaited<ReturnType<typeof loadKeypairSignerFromFile>>
@@ -81,9 +90,9 @@ describe('counter', () => {
     expect(account.data.count).toBe(42)
   })
 
-  it('Set close the counter account', async () => {
+  it('Close the counter account', async () => {
     await send(getCloseInstruction({ payer, counter: counterSigner.address }))
     const account = await fetchMaybeCounter(client.rpc, counterSigner.address)
-    expect(account && 'exists' in account ? account.exists : account === null).toBe(false)
+    expect(account).toBeNull()
   })
 })
